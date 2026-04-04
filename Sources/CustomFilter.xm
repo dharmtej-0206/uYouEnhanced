@@ -10,6 +10,7 @@
 static BOOL isBlockedContent(NSString *text) {
     if (!text) return NO;
     NSString *lowercaseText = [text lowercaseString];
+    NSLog(@"[uYouEnhanced] Running custom focus filter...");
     
     // ADD YOUR BLOCKED KEYWORDS OR CHANNEL NAMES HERE
     // Keep everything lowercase!
