@@ -7,18 +7,21 @@
 @interface YTCompactVideoNode : UIView
 @end
 
-// 1. The Filtering Engine
+@interface YTBrowseViewController : UIViewController
+- (NSString *)browseIdentifier;
+@end
+
+// 1. The Filtering Engine (Now only needed for Search Results)
 static BOOL isBlockedContent(NSString *text) {
     if (!text) return NO;
     NSString *lowercaseText = [text lowercaseString];
     
-    // ADD YOUR BLOCKED KEYWORDS OR CHANNEL NAMES HERE
-    // Keep everything lowercase!
+    // KEEP EVERYTHING LOWERCASE
     NSArray *blockedKeywords = @[
         @"phonk",
         @"mrbeast", 
         @"t-series",
-        @"specific channel name" 
+        @"specific channel name"
     ];
     
     for (NSString *keyword in blockedKeywords) {
@@ -29,52 +32,68 @@ static BOOL isBlockedContent(NSString *text) {
     return NO;
 }
 
-// 2. Hooking the Home Feed Videos (YTVideoWithContextNode)
+// 2. NUKE THE ENTIRE HOME FEED
+%hook YTBrowseViewController
+- (void)viewWillAppear:(BOOL)animated {
+    %orig;
+    
+    // YouTube identifies the Home tab as "FEwhat_to_watch"
+    if ([self respondsToSelector:@selector(browseIdentifier)]) {
+        if ([[self browseIdentifier] isEqualToString:@"FEwhat_to_watch"]) {
+            // Turn the Home Feed into a completely blank, dead screen
+            self.view.hidden = YES;
+            self.view.alpha = 0.0;
+            self.view.userInteractionEnabled = NO;
+        }
+    }
+}
+%end
+
+// 3. Hooking Search Results (YTVideoWithContextNode)
 %hook YTVideoWithContextNode
-- (void)layoutSubviews {
-    %orig; // Let the original code run first
+- (void)setAccessibilityLabel:(NSString *)label {
+    %orig;
     
-    NSString *accessibilityLabel = [self accessibilityLabel]; 
-    
-    if (isBlockedContent(accessibilityLabel)) {
-        // Aggressive hiding for the Texture engine
+    // If it's a blocked video in Search, nuke it
+    if (isBlockedContent(label)) {
         self.hidden = YES;
         self.alpha = 0.0;
         self.userInteractionEnabled = NO;
-        
-        // Crush the frame so it doesn't leave a massive blank hole
-        CGRect frame = self.frame;
-        frame.size.height = 0;
-        self.frame = frame;
+        self.frame = CGRectZero; 
     } else {
-        // CRITICAL: Restore the cell if iOS recycles it for a good video!
         self.hidden = NO;
         self.alpha = 1.0;
         self.userInteractionEnabled = YES;
     }
 }
-%end
 
-// 3. Hooking the Search Results and "Up Next" sidebar (YTCompactVideoNode)
-%hook YTCompactVideoNode
 - (void)layoutSubviews {
     %orig;
-    
-    NSString *accessibilityLabel = [self accessibilityLabel]; 
-    
-    if (isBlockedContent(accessibilityLabel)) {
+    if (isBlockedContent([self accessibilityLabel])) {
         self.hidden = YES;
         self.alpha = 0.0;
-        self.userInteractionEnabled = NO;
-        
-        CGRect frame = self.frame;
-        frame.size.height = 0;
-        self.frame = frame;
-    } else {
-        // Restore recycled cells
-        self.hidden = NO;
-        self.alpha = 1.0;
-        self.userInteractionEnabled = YES;
+        self.frame = CGRectZero;
     }
+}
+%end
+
+// 4. NUKE ALL RELATED VIDEOS (Unconditional Hiding)
+%hook YTCompactVideoNode
+- (void)setAccessibilityLabel:(NSString *)label {
+    %orig;
+    
+    // Since you want NO related videos at all, we bypass the filter 
+    // and instantly execute every single small video node.
+    self.hidden = YES;
+    self.alpha = 0.0;
+    self.userInteractionEnabled = NO;
+    self.frame = CGRectZero;
+}
+
+- (void)layoutSubviews {
+    %orig;
+    self.hidden = YES;
+    self.alpha = 0.0;
+    self.frame = CGRectZero;
 }
 %end
