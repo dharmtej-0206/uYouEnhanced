@@ -1,17 +1,36 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-@interface YTVideoWithContextNode : UIView
+// 1. TEXTURE (ASYNCDISPLAYKIT) INTERFACES
+// This tells the compiler how to talk to Google's custom layout engine
+@interface ASLayoutElementStyle : NSObject
+@property (nonatomic, assign) CGSize preferredSize;
 @end
 
-@interface YTCompactVideoNode : UIView
+@interface ASDisplayNode : NSObject
+@property (nonatomic, assign) BOOL hidden;
+@property (nonatomic, assign) CGFloat alpha;
+@property (nonatomic, strong) ASLayoutElementStyle *style;
+@end
+
+@interface YTVideoWithContextNode : ASDisplayNode
+@end
+
+@interface YTCompactVideoNode : ASDisplayNode
+@end
+
+@interface YTCreatorEndscreenNode : ASDisplayNode
 @end
 
 @interface YTBrowseViewController : UIViewController
 - (NSString *)browseIdentifier;
 @end
 
-// 1. The Filtering Engine (Now only needed for Search Results)
+@interface YTFullscreenEngagementOverlayView : UIView
+@end
+
+
+// 2. THE FILTERING ENGINE
 static BOOL isBlockedContent(NSString *text) {
     if (!text) return NO;
     NSString *lowercaseText = [text lowercaseString];
@@ -32,15 +51,12 @@ static BOOL isBlockedContent(NSString *text) {
     return NO;
 }
 
-// 2. NUKE THE ENTIRE HOME FEED
+// 3. NUKE THE HOME FEED (Confirmed Working)
 %hook YTBrowseViewController
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
-    
-    // YouTube identifies the Home tab as "FEwhat_to_watch"
     if ([self respondsToSelector:@selector(browseIdentifier)]) {
         if ([[self browseIdentifier] isEqualToString:@"FEwhat_to_watch"]) {
-            // Turn the Home Feed into a completely blank, dead screen
             self.view.hidden = YES;
             self.view.alpha = 0.0;
             self.view.userInteractionEnabled = NO;
@@ -49,47 +65,53 @@ static BOOL isBlockedContent(NSString *text) {
 }
 %end
 
-// 3. Hooking Search Results (YTVideoWithContextNode)
+// 4. KEYWORD BLOCKING (Texture/ASDisplayNode Fix)
 %hook YTVideoWithContextNode
 - (void)setAccessibilityLabel:(NSString *)label {
     %orig;
-    
-    // If it's a blocked video in Search, nuke it
     if (isBlockedContent(label)) {
         self.hidden = YES;
         self.alpha = 0.0;
-        self.userInteractionEnabled = NO;
-        self.frame = CGRectZero; 
+        // This is the secret command to crush a Texture Flexbox
+        self.style.preferredSize = CGSizeMake(0, 0); 
     } else {
         self.hidden = NO;
         self.alpha = 1.0;
-        self.userInteractionEnabled = YES;
-    }
-}
-
-- (void)layoutSubviews {
-    %orig;
-    if (isBlockedContent([self accessibilityLabel])) {
-        self.hidden = YES;
-        self.alpha = 0.0;
-        self.frame = CGRectZero;
     }
 }
 %end
 
-// 4. NUKE ALL RELATED VIDEOS (Unconditional Hiding)
+// 5. HARDCODED uYou SETTINGS (Permanently Enabled)
+
+// A. "Hide all videos under player" & "Hide suggested video"
+// This completely kills YTCompactVideoNode so NO small related videos ever render.
 %hook YTCompactVideoNode
-- (void)setAccessibilityLabel:(NSString *)label {
+- (void)didLoad {
     %orig;
-    
-    // Since you want NO related videos at all, we bypass the filter 
-    // and instantly execute every single small video node.
     self.hidden = YES;
     self.alpha = 0.0;
-    self.userInteractionEnabled = NO;
-    self.frame = CGRectZero;
+    self.style.preferredSize = CGSizeMake(0, 0);
 }
+- (void)setAccessibilityLabel:(NSString *)label {
+    %orig;
+    self.hidden = YES;
+    self.style.preferredSize = CGSizeMake(0, 0);
+}
+%end
 
+// B. "YT no hoverCards"
+// Kills the annoying channel popups at the end of videos
+%hook YTCreatorEndscreenNode
+- (void)didLoad {
+    %orig;
+    self.hidden = YES;
+    self.style.preferredSize = CGSizeMake(0, 0);
+}
+%end
+
+// C. "Hide suggested videos in fullscreen"
+// Kills the grid of videos that blocks the screen when a video ends
+%hook YTFullscreenEngagementOverlayView
 - (void)layoutSubviews {
     %orig;
     self.hidden = YES;
