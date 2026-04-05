@@ -1,7 +1,10 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-// 1. INTERFACES (Texture, ELM, and YouTube Controllers)
+// ==========================================
+// 1. INTERFACES (Texture, ELM, and YouTube)
+// ==========================================
+
 @interface ASLayoutElementStyle : NSObject
 @property (nonatomic, assign) CGSize preferredSize;
 @end
@@ -28,7 +31,6 @@
 @interface YTFullscreenEngagementOverlayView : UIView
 @end
 
-// --- NEW INTERFACES ---
 @interface ELMElement : NSObject
 @end
 
@@ -40,8 +42,19 @@
 - (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate;
 @end
 
+@interface YTInnerTubeCellController : NSObject
+- (void)setEntry:(id)entry;
+@end
 
+@interface YTVideoWithContextNode : ASDisplayNode
+- (void)setVideo:(id)video; 
+@end
+
+
+// ==========================================
 // 2. THE FILTERING ENGINE
+// ==========================================
+
 static BOOL isBlockedContent(NSString *text) {
     if (!text) return NO;
     NSString *lowercaseText = [text lowercaseString];
@@ -104,30 +117,59 @@ static BOOL isBlockedContent(NSString *text) {
 }
 
 
-// 3. THE DATA MODEL ASSASSINS (Primary Defense)
+// ==========================================
+// 3. THE DATA MODEL ASSASSINS 
+// (Intercepts data when cells are first built or recycled)
+// ==========================================
 
-// Hooks Standard Video Cells
+// Hook 1: Blocks NEW standard video cells
 %hook YTVideoElementCellController
 - (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate {
     if (entry) {
         NSString *entryData = [entry description];
         if (isBlockedContent(entryData)) {
-            // Returning nil prevents the cell from ever being created in memory
-            return nil; 
+            return nil; // Prevents the cell from being created
         }
     }
     return %orig(entry, parentResponder, creationDate);
 }
 %end
 
-// Hooks Live Streams, Shorts, and Promotional Cells
+// Hook 2: Blocks RECYCLED video cells (Crucial for search results & scrolling)
+%hook YTInnerTubeCellController
+- (void)setEntry:(id)entry {
+    if (entry) {
+        NSString *entryData = [entry description];
+        if (isBlockedContent(entryData)) {
+            %orig(nil); // Feed it nil so it renders blank
+            return;
+        }
+    }
+    %orig;
+}
+%end
+
+// Hook 3: Blocks NEW Elements cells (Live Streams, Shorts, Promos)
 %hook ELMCellNode
 - (void)setElement:(ELMElement *)element {
     if (element) {
         NSString *elementData = [element description];
         if (isBlockedContent(elementData)) {
-            // Bypassing %orig starves the cell of data, preventing rendering
-            // We also force its frame to zero just in case Elements tries to space it
+            self.hidden = YES;
+            self.style.preferredSize = CGSizeMake(0, 0);
+            return; // Starve the cell of data
+        }
+    }
+    %orig;
+}
+%end
+
+// Hook 4: Blocks RECYCLED standard video nodes in search UI
+%hook YTVideoWithContextNode
+- (void)setVideo:(id)video {
+    if (video) {
+        NSString *videoData = [video description];
+        if (isBlockedContent(videoData)) {
             self.hidden = YES;
             self.style.preferredSize = CGSizeMake(0, 0);
             return; 
@@ -138,19 +180,19 @@ static BOOL isBlockedContent(NSString *text) {
 %end
 
 
+// ==========================================
 // 4. THE TEXTURE FALLBACK (Secondary Defense)
+// ==========================================
+
 %hook ASTextNode
 - (void)setAttributedText:(NSAttributedString *)attributedText {
     %orig; 
-    
     if (!attributedText) return;
     
     if (isBlockedContent(attributedText.string)) {
         ASDisplayNode *parentNode = self.supernode;
-        
         while (parentNode != nil) {
             NSString *className = NSStringFromClass([parentNode class]);
-            
             if ([className containsString:@"CellNode"] || 
                 [className containsString:@"VideoNode"]) {
                 
@@ -169,7 +211,11 @@ static BOOL isBlockedContent(NSString *text) {
 %end
 
 
-// 5. NUKE THE HOME FEED
+// ==========================================
+// 5. HARDCODED UI CLEANUP
+// ==========================================
+
+// Nuke the Home Feed entirely
 %hook YTBrowseViewController
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
@@ -183,8 +229,7 @@ static BOOL isBlockedContent(NSString *text) {
 }
 %end
 
-
-// 6. HARDCODED uYou SETTINGS
+// Kill Legacy Related Videos & Popups
 %hook YTCompactVideoNode
 - (void)didLoad {
     %orig;
