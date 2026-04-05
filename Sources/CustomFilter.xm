@@ -2,26 +2,17 @@
 #import <UIKit/UIKit.h>
 
 // ==========================================
-// 1. INTERFACES (Texture, ELM, and YouTube)
+// 1. INTERFACES
 // ==========================================
 
 @interface ASLayoutElementStyle : NSObject
 @property (nonatomic, assign) CGSize preferredSize;
 @end
 
-@interface ASLayoutSpec : NSObject
-@end
-
 @interface ASDisplayNode : NSObject
 @property (nonatomic, assign) BOOL hidden;
 @property (nonatomic, assign) CGRect frame;
 @property (nonatomic, strong) ASLayoutElementStyle *style;
-@property (nonatomic, weak) ASDisplayNode *supernode; 
-- (NSString *)accessibilityLabel; // Added to read the VoiceOver text
-@end
-
-@interface ASTextNode : ASDisplayNode
-@property (copy) NSAttributedString *attributedText;
 @end
 
 @interface YTBrowseViewController : UIViewController
@@ -30,20 +21,24 @@
 
 @interface YTCompactVideoNode : ASDisplayNode
 @end
+
 @interface YTCreatorEndscreenNode : ASDisplayNode
 @end
+
 @interface YTFullscreenEngagementOverlayView : UIView
 @end
 
-@interface ELMElement : NSObject
+// The Golden YTLite Classes
+@interface YTIElementRenderer : NSObject
+- (NSData *)elementData;
 @end
 
-@interface ELMCellNode : ASDisplayNode
-- (void)setElement:(ELMElement *)element;
+@interface YTInnerTubeCellController : NSObject
+- (void)setEntry:(id)entry;
 @end
 
-@interface YTVideoWithContextNode : ASDisplayNode
-- (void)setVideo:(id)video; 
+@interface YTVideoElementCellController : NSObject
+- (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate;
 @end
 
 
@@ -114,108 +109,57 @@ static BOOL isBlockedContent(NSString *text) {
 
 
 // ==========================================
-// 3. THE ACCESSIBILITY ASSASSINS 
-// (Cheats the system by reading the VoiceOver plain text)
+// 3. THE RAW DATA ASSASSINS (The YTLite Method)
 // ==========================================
 
-// Hook 1: Standard Video Cells (Search Results, Related Videos)
-%hook YTVideoWithContextNode
-
-- (void)setVideo:(id)video {
-    // 1. MUST call %orig first so YouTube populates the text
-    %orig; 
+// 1. The ELM Network Payload Interceptor (Kills Live Streams, Shorts, Custom UI)
+%hook YTIElementRenderer
+- (NSData *)elementData {
+    // Dump the raw unparsed server data into a string
+    NSString *description = [self description];
     
-    // 2. Read the fully translated, un-encrypted VoiceOver string
-    NSString *a11yText = [self accessibilityLabel];
-    
-    // 3. Check for the block
-    if (isBlockedContent(a11yText)) {
-        self.hidden = YES;
-        self.style.preferredSize = CGSizeMake(0.001, 0.001); // Crush to basically zero
-        
-        if ([self respondsToSelector:@selector(setFrame:)]) {
-            self.frame = CGRectZero;
+    if (description != nil) {
+        if (isBlockedContent(description)) {
+            // Delete the data bytes entirely. 
+            // The app will act like this video never existed on the server.
+            return nil;
         }
     }
-}
-
-// 4. Force Texture's layout engine to accept the zero size
-- (ASLayoutSpec *)layoutSpecThatFits:(struct ASSizeRange)constrainedSize {
-    if (self.hidden == YES) {
-        return [[NSClassFromString(@"ASLayoutSpec") alloc] init]; 
-    }
+    
     return %orig;
 }
-
 %end
 
-
-// Hook 2: Elements Cells (Live Streams, Ads, Shorts)
-%hook ELMCellNode
-
-- (void)setElement:(ELMElement *)element {
-    %orig; 
-    
-    NSString *a11yText = [self accessibilityLabel];
-    
-    if (isBlockedContent(a11yText)) {
-        self.hidden = YES;
-        self.style.preferredSize = CGSizeMake(0.001, 0.001);
-        
-        if ([self respondsToSelector:@selector(setFrame:)]) {
-            self.frame = CGRectZero;
+// 2. The Standard Controller Interceptor (Kills normal Search Results & Recycled Cells)
+%hook YTInnerTubeCellController
+- (void)setEntry:(id)entry {
+    if (entry) {
+        NSString *entryData = [entry description];
+        if (isBlockedContent(entryData)) {
+            %orig(nil); // Feed it nil data so it collapses
+            return;
         }
     }
+    %orig;
 }
-
-- (ASLayoutSpec *)layoutSpecThatFits:(struct ASSizeRange)constrainedSize {
-    if (self.hidden == YES) {
-        return [[NSClassFromString(@"ASLayoutSpec") alloc] init]; 
-    }
-    return %orig;
-}
-
 %end
 
-
-// ==========================================
-// 4. THE TEXTURE FALLBACK (Safety Net)
-// ==========================================
-
-%hook ASTextNode
-
-- (void)setAttributedText:(NSAttributedString *)attributedText {
-    %orig; 
-    
-    if (!attributedText) return;
-    
-    if (isBlockedContent(attributedText.string)) {
-        ASDisplayNode *parentNode = self.supernode;
-        
-        while (parentNode != nil) {
-            NSString *className = NSStringFromClass([parentNode class]);
-            
-            if ([className containsString:@"CellNode"] || 
-                [className containsString:@"VideoNode"]) {
-                
-                parentNode.hidden = YES;
-                parentNode.style.preferredSize = CGSizeMake(0.001, 0.001);
-                
-                if ([parentNode respondsToSelector:@selector(setFrame:)]) {
-                    parentNode.frame = CGRectZero;
-                }
-                break; 
-            }
-            parentNode = parentNode.supernode;
+// 3. The Controller Initialization Interceptor (Kills standard videos on first load)
+%hook YTVideoElementCellController
+- (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate {
+    if (entry) {
+        NSString *entryData = [entry description];
+        if (isBlockedContent(entryData)) {
+            return nil; // Abort the creation of this cell
         }
     }
+    return %orig(entry, parentResponder, creationDate);
 }
-
 %end
 
 
 // ==========================================
-// 5. HARDCODED UI CLEANUP
+// 4. HARDCODED UI CLEANUP (Your original requests)
 // ==========================================
 
 // Nuke the Home Feed entirely
