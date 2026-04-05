@@ -1,7 +1,7 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
-// 1. TEXTURE (ASYNCDISPLAYKIT) INTERFACES
+// 1. INTERFACES (Texture, ELM, and YouTube Controllers)
 @interface ASLayoutElementStyle : NSObject
 @property (nonatomic, assign) CGSize preferredSize;
 @end
@@ -10,7 +10,7 @@
 @property (nonatomic, assign) BOOL hidden;
 @property (nonatomic, assign) CGRect frame;
 @property (nonatomic, strong) ASLayoutElementStyle *style;
-@property (nonatomic, weak) ASDisplayNode *supernode; // Texture's internal family tree
+@property (nonatomic, weak) ASDisplayNode *supernode; 
 @end
 
 @interface ASTextNode : ASDisplayNode
@@ -28,12 +28,24 @@
 @interface YTFullscreenEngagementOverlayView : UIView
 @end
 
-// 2. THE FILTERING ENGINE (Built from your JSON)
+// --- NEW INTERFACES ---
+@interface ELMElement : NSObject
+@end
+
+@interface ELMCellNode : ASDisplayNode
+- (void)setElement:(ELMElement *)element;
+@end
+
+@interface YTVideoElementCellController : NSObject
+- (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate;
+@end
+
+
+// 2. THE FILTERING ENGINE
 static BOOL isBlockedContent(NSString *text) {
     if (!text) return NO;
     NSString *lowercaseText = [text lowercaseString];
     
-    // YOUR COMPLETE BLOCKTUBE EXPORT
     NSArray *blockedKeywords = @[
         // --- TITLES & KEYWORDS ---
         @"phonk", @"funk", @"slowed", @"music", @"sempero", @"teconci",
@@ -91,37 +103,64 @@ static BOOL isBlockedContent(NSString *text) {
     return NO;
 }
 
-// 3. THE TEXTURE ASSASSIN (Hooks the exact text-drawing engine)
+
+// 3. THE DATA MODEL ASSASSINS (Primary Defense)
+
+// Hooks Standard Video Cells
+%hook YTVideoElementCellController
+- (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate {
+    if (entry) {
+        NSString *entryData = [entry description];
+        if (isBlockedContent(entryData)) {
+            // Returning nil prevents the cell from ever being created in memory
+            return nil; 
+        }
+    }
+    return %orig(entry, parentResponder, creationDate);
+}
+%end
+
+// Hooks Live Streams, Shorts, and Promotional Cells
+%hook ELMCellNode
+- (void)setElement:(ELMElement *)element {
+    if (element) {
+        NSString *elementData = [element description];
+        if (isBlockedContent(elementData)) {
+            // Bypassing %orig starves the cell of data, preventing rendering
+            // We also force its frame to zero just in case Elements tries to space it
+            self.hidden = YES;
+            self.style.preferredSize = CGSizeMake(0, 0);
+            return; 
+        }
+    }
+    %orig;
+}
+%end
+
+
+// 4. THE TEXTURE FALLBACK (Secondary Defense)
 %hook ASTextNode
 - (void)setAttributedText:(NSAttributedString *)attributedText {
-    %orig; // Let the engine set the text
+    %orig; 
     
     if (!attributedText) return;
     
     if (isBlockedContent(attributedText.string)) {
-        // We caught a blocked keyword! 
-        // Climb Texture's internal Node Tree (NOT the UIView tree)
         ASDisplayNode *parentNode = self.supernode;
         
         while (parentNode != nil) {
             NSString *className = NSStringFromClass([parentNode class]);
             
-            // If the parent is ANY type of Master Video Card, crush it
             if ([className containsString:@"CellNode"] || 
                 [className containsString:@"VideoNode"]) {
                 
-                // Hide it
                 parentNode.hidden = YES;
-                
-                // Force Texture Flexbox engine to calculate this card as 0x0 pixels
                 parentNode.style.preferredSize = CGSizeMake(0, 0);
                 
-                // Nuke the physical frame
                 if ([parentNode respondsToSelector:@selector(setFrame:)]) {
                     parentNode.frame = CGRectZero;
                 }
-                
-                break; // Stop climbing once we kill the master wrapper
+                break; 
             }
             parentNode = parentNode.supernode;
         }
@@ -129,7 +168,8 @@ static BOOL isBlockedContent(NSString *text) {
 }
 %end
 
-// 4. NUKE THE HOME FEED
+
+// 5. NUKE THE HOME FEED
 %hook YTBrowseViewController
 - (void)viewWillAppear:(BOOL)animated {
     %orig;
@@ -143,7 +183,8 @@ static BOOL isBlockedContent(NSString *text) {
 }
 %end
 
-// 5. HARDCODED uYou SETTINGS (Permanently kill legacy related videos & popups)
+
+// 6. HARDCODED uYou SETTINGS
 %hook YTCompactVideoNode
 - (void)didLoad {
     %orig;
