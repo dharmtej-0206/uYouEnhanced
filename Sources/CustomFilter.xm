@@ -5,30 +5,6 @@
 // 1. INTERFACES
 // ==========================================
 
-@interface ASLayoutElementStyle : NSObject
-@property (nonatomic, assign) CGSize preferredSize;
-@end
-
-@interface ASDisplayNode : NSObject
-@property (nonatomic, assign) BOOL hidden;
-@property (nonatomic, assign) CGRect frame;
-@property (nonatomic, strong) ASLayoutElementStyle *style;
-@end
-
-@interface YTBrowseViewController : UIViewController
-- (NSString *)browseIdentifier;
-@end
-
-@interface YTCompactVideoNode : ASDisplayNode
-@end
-
-@interface YTCreatorEndscreenNode : ASDisplayNode
-@end
-
-@interface YTFullscreenEngagementOverlayView : UIView
-@end
-
-// The Golden YTLite Classes
 @interface YTIElementRenderer : NSObject
 - (NSData *)elementData;
 @end
@@ -109,20 +85,17 @@ static BOOL isBlockedContent(NSString *text) {
 
 
 // ==========================================
-// 3. THE RAW DATA ASSASSINS (The YTLite Method)
+// 3. THE RAW DATA ASSASSINS 
 // ==========================================
 
-// 1. The ELM Network Payload Interceptor (Kills Live Streams, Shorts, Custom UI)
+// 1. The ELM Network Payload Interceptor (Live Streams, Shorts, Ads)
 %hook YTIElementRenderer
 - (NSData *)elementData {
-    // Dump the raw unparsed server data into a string
     NSString *description = [self description];
     
     if (description != nil) {
         if (isBlockedContent(description)) {
-            // Delete the data bytes entirely. 
-            // The app will act like this video never existed on the server.
-            return nil;
+            return nil; // Deletes the data before the UI knows it exists
         }
     }
     
@@ -130,13 +103,13 @@ static BOOL isBlockedContent(NSString *text) {
 }
 %end
 
-// 2. The Standard Controller Interceptor (Kills normal Search Results & Recycled Cells)
+// 2. The Standard Controller Interceptor (Recycled Cells & Standard Search)
 %hook YTInnerTubeCellController
 - (void)setEntry:(id)entry {
     if (entry) {
         NSString *entryData = [entry description];
         if (isBlockedContent(entryData)) {
-            %orig(nil); // Feed it nil data so it collapses
+            %orig(nil); 
             return;
         }
     }
@@ -144,59 +117,15 @@ static BOOL isBlockedContent(NSString *text) {
 }
 %end
 
-// 3. The Controller Initialization Interceptor (Kills standard videos on first load)
+// 3. The Controller Initialization Interceptor (First load standard videos)
 %hook YTVideoElementCellController
 - (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate {
     if (entry) {
         NSString *entryData = [entry description];
         if (isBlockedContent(entryData)) {
-            return nil; // Abort the creation of this cell
+            return nil; 
         }
     }
     return %orig(entry, parentResponder, creationDate);
-}
-%end
-
-
-// ==========================================
-// 4. HARDCODED UI CLEANUP (Your original requests)
-// ==========================================
-
-// Nuke the Home Feed entirely
-%hook YTBrowseViewController
-- (void)viewWillAppear:(BOOL)animated {
-    %orig;
-    if ([self respondsToSelector:@selector(browseIdentifier)]) {
-        if ([[self browseIdentifier] isEqualToString:@"FEwhat_to_watch"]) {
-            self.view.hidden = YES;
-            self.view.alpha = 0.0;
-            self.view.userInteractionEnabled = NO;
-        }
-    }
-}
-%end
-
-// Kill Legacy Related Videos & Popups
-%hook YTCompactVideoNode
-- (void)didLoad {
-    %orig;
-    self.hidden = YES;
-    self.style.preferredSize = CGSizeMake(0.001, 0.001);
-}
-%end
-
-%hook YTCreatorEndscreenNode
-- (void)didLoad {
-    %orig;
-    self.hidden = YES;
-    self.style.preferredSize = CGSizeMake(0.001, 0.001);
-}
-%end
-
-%hook YTFullscreenEngagementOverlayView
-- (void)layoutSubviews {
-    %orig;
-    self.hidden = YES;
-    self.frame = CGRectZero;
 }
 %end
