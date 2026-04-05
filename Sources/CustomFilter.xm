@@ -1,19 +1,11 @@
 #import <Foundation/Foundation.h>
 
 // ==========================================
-// 1. INTERFACES (For the Channel/Keyword Blocker)
+// 1. INTERFACES 
 // ==========================================
 
 @interface YTIElementRenderer : NSObject
 - (NSData *)elementData;
-@end
-
-@interface YTInnerTubeCellController : NSObject
-- (void)setEntry:(id)entry;
-@end
-
-@interface YTVideoElementCellController : NSObject
-- (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate;
 @end
 
 
@@ -84,7 +76,7 @@ static BOOL isBlockedContent(NSString *text) {
 
 
 // ==========================================
-// 3. THE RAW DATA ASSASSINS (Keyword/Channel Blocking)
+// 3. THE RAW DATA ASSASSINS (YTLite Method ONLY)
 // ==========================================
 
 %hook YTIElementRenderer
@@ -92,35 +84,10 @@ static BOOL isBlockedContent(NSString *text) {
     NSString *description = [self description];
     if (description != nil) {
         if (isBlockedContent(description)) {
-            return nil; 
+            return nil; // Deletes the feed cards before rendering
         }
     }
     return %orig;
-}
-%end
-
-%hook YTInnerTubeCellController
-- (void)setEntry:(id)entry {
-    if (entry) {
-        NSString *entryData = [entry description];
-        if (isBlockedContent(entryData)) {
-            %orig(nil); 
-            return;
-        }
-    }
-    %orig;
-}
-%end
-
-%hook YTVideoElementCellController
-- (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate {
-    if (entry) {
-        NSString *entryData = [entry description];
-        if (isBlockedContent(entryData)) {
-            return nil; 
-        }
-    }
-    return %orig(entry, parentResponder, creationDate);
 }
 %end
 
@@ -131,22 +98,17 @@ static BOOL isBlockedContent(NSString *text) {
 
 %hook NSUserDefaults
 
-// This intercepts every time the app checks a true/false setting
 - (BOOL)boolForKey:(NSString *)defaultName {
     
-    // We check if the app is asking about the 4 specific toggles you want on.
-    // Using containsString protects us just in case they added "_enabled" to the end of their keys.
-    if ([defaultName containsString:@"hideRelatedWatchNexts"] || // a) Hide all videos under player
-        [defaultName containsString:@"hideVideosInFullscreen"] || // b) Hide suggested videos in fullscreen
-        [defaultName containsString:@"hideSuggestedVideo"] || // c) Hide suggested video
-        [defaultName containsString:@"hideHoverCards"] || // d) YT no hoverCards (uYou's setting)
-        [defaultName containsString:@"endScreenCards"]) { // d) YT no hoverCards (YTLite's setting backup)
-        
-        // Force the app to believe the toggle is turned ON
+    // Forces uYouEnhanced to hide related videos, suggested videos, and endscreens
+    if ([defaultName containsString:@"hideRelatedWatchNexts"] || 
+        [defaultName containsString:@"hideVideosInFullscreen"] || 
+        [defaultName containsString:@"hideSuggestedVideo"] || 
+        [defaultName containsString:@"hideHoverCards"] || 
+        [defaultName containsString:@"endScreenCards"]) {
         return YES;
     }
     
-    // For every other setting (like Dark Mode, Autoplay, etc.), behave normally
     return %orig;
 }
 
