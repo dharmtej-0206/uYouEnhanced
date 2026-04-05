@@ -9,11 +9,15 @@
 @property (nonatomic, assign) CGSize preferredSize;
 @end
 
+@interface ASLayoutSpec : NSObject
+@end
+
 @interface ASDisplayNode : NSObject
 @property (nonatomic, assign) BOOL hidden;
 @property (nonatomic, assign) CGRect frame;
 @property (nonatomic, strong) ASLayoutElementStyle *style;
 @property (nonatomic, weak) ASDisplayNode *supernode; 
+- (NSString *)accessibilityLabel; // Added to read the VoiceOver text
 @end
 
 @interface ASTextNode : ASDisplayNode
@@ -36,14 +40,6 @@
 
 @interface ELMCellNode : ASDisplayNode
 - (void)setElement:(ELMElement *)element;
-@end
-
-@interface YTVideoElementCellController : NSObject
-- (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate;
-@end
-
-@interface YTInnerTubeCellController : NSObject
-- (void)setEntry:(id)entry;
 @end
 
 @interface YTVideoWithContextNode : ASDisplayNode
@@ -118,86 +114,92 @@ static BOOL isBlockedContent(NSString *text) {
 
 
 // ==========================================
-// 3. THE DATA MODEL ASSASSINS 
-// (Intercepts data when cells are first built or recycled)
+// 3. THE ACCESSIBILITY ASSASSINS 
+// (Cheats the system by reading the VoiceOver plain text)
 // ==========================================
 
-// Hook 1: Blocks NEW standard video cells
-%hook YTVideoElementCellController
-- (id)initWithEntry:(id)entry parentResponder:(id)parentResponder creationDate:(id)creationDate {
-    if (entry) {
-        NSString *entryData = [entry description];
-        if (isBlockedContent(entryData)) {
-            return nil; // Prevents the cell from being created
-        }
-    }
-    return %orig(entry, parentResponder, creationDate);
-}
-%end
-
-// Hook 2: Blocks RECYCLED video cells (Crucial for search results & scrolling)
-%hook YTInnerTubeCellController
-- (void)setEntry:(id)entry {
-    if (entry) {
-        NSString *entryData = [entry description];
-        if (isBlockedContent(entryData)) {
-            %orig(nil); // Feed it nil so it renders blank
-            return;
-        }
-    }
-    %orig;
-}
-%end
-
-// Hook 3: Blocks NEW Elements cells (Live Streams, Shorts, Promos)
-%hook ELMCellNode
-- (void)setElement:(ELMElement *)element {
-    if (element) {
-        NSString *elementData = [element description];
-        if (isBlockedContent(elementData)) {
-            self.hidden = YES;
-            self.style.preferredSize = CGSizeMake(0, 0);
-            return; // Starve the cell of data
-        }
-    }
-    %orig;
-}
-%end
-
-// Hook 4: Blocks RECYCLED standard video nodes in search UI
+// Hook 1: Standard Video Cells (Search Results, Related Videos)
 %hook YTVideoWithContextNode
+
 - (void)setVideo:(id)video {
-    if (video) {
-        NSString *videoData = [video description];
-        if (isBlockedContent(videoData)) {
-            self.hidden = YES;
-            self.style.preferredSize = CGSizeMake(0, 0);
-            return; 
+    // 1. MUST call %orig first so YouTube populates the text
+    %orig; 
+    
+    // 2. Read the fully translated, un-encrypted VoiceOver string
+    NSString *a11yText = [self accessibilityLabel];
+    
+    // 3. Check for the block
+    if (isBlockedContent(a11yText)) {
+        self.hidden = YES;
+        self.style.preferredSize = CGSizeMake(0.001, 0.001); // Crush to basically zero
+        
+        if ([self respondsToSelector:@selector(setFrame:)]) {
+            self.frame = CGRectZero;
         }
     }
-    %orig;
 }
+
+// 4. Force Texture's layout engine to accept the zero size
+- (ASLayoutSpec *)layoutSpecThatFits:(struct ASSizeRange)constrainedSize {
+    if (self.hidden == YES) {
+        return [[NSClassFromString(@"ASLayoutSpec") alloc] init]; 
+    }
+    return %orig;
+}
+
+%end
+
+
+// Hook 2: Elements Cells (Live Streams, Ads, Shorts)
+%hook ELMCellNode
+
+- (void)setElement:(ELMElement *)element {
+    %orig; 
+    
+    NSString *a11yText = [self accessibilityLabel];
+    
+    if (isBlockedContent(a11yText)) {
+        self.hidden = YES;
+        self.style.preferredSize = CGSizeMake(0.001, 0.001);
+        
+        if ([self respondsToSelector:@selector(setFrame:)]) {
+            self.frame = CGRectZero;
+        }
+    }
+}
+
+- (ASLayoutSpec *)layoutSpecThatFits:(struct ASSizeRange)constrainedSize {
+    if (self.hidden == YES) {
+        return [[NSClassFromString(@"ASLayoutSpec") alloc] init]; 
+    }
+    return %orig;
+}
+
 %end
 
 
 // ==========================================
-// 4. THE TEXTURE FALLBACK (Secondary Defense)
+// 4. THE TEXTURE FALLBACK (Safety Net)
 // ==========================================
 
 %hook ASTextNode
+
 - (void)setAttributedText:(NSAttributedString *)attributedText {
     %orig; 
+    
     if (!attributedText) return;
     
     if (isBlockedContent(attributedText.string)) {
         ASDisplayNode *parentNode = self.supernode;
+        
         while (parentNode != nil) {
             NSString *className = NSStringFromClass([parentNode class]);
+            
             if ([className containsString:@"CellNode"] || 
                 [className containsString:@"VideoNode"]) {
                 
                 parentNode.hidden = YES;
-                parentNode.style.preferredSize = CGSizeMake(0, 0);
+                parentNode.style.preferredSize = CGSizeMake(0.001, 0.001);
                 
                 if ([parentNode respondsToSelector:@selector(setFrame:)]) {
                     parentNode.frame = CGRectZero;
@@ -208,6 +210,7 @@ static BOOL isBlockedContent(NSString *text) {
         }
     }
 }
+
 %end
 
 
@@ -234,7 +237,7 @@ static BOOL isBlockedContent(NSString *text) {
 - (void)didLoad {
     %orig;
     self.hidden = YES;
-    self.style.preferredSize = CGSizeMake(0,0);
+    self.style.preferredSize = CGSizeMake(0.001, 0.001);
 }
 %end
 
@@ -242,7 +245,7 @@ static BOOL isBlockedContent(NSString *text) {
 - (void)didLoad {
     %orig;
     self.hidden = YES;
-    self.style.preferredSize = CGSizeMake(0,0);
+    self.style.preferredSize = CGSizeMake(0.001, 0.001);
 }
 %end
 
